@@ -1,16 +1,13 @@
 import streamlit as st
 import google.generativeai as genai
-import requests
-from bs4 import BeautifulSoup
 from docx import Document
 import PyPDF2
 import io
-from googleapiclient.discovery import build
+import re
+from collections import Counter
 
 # Configure the API key securely from Streamlit's secrets
 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-google_cse_api_key = st.secrets["GOOGLE_CSE_API_KEY"]
-google_cse_engine_id = st.secrets["GOOGLE_CSE_ENGINE_ID"]
 
 # Function to extract text from DOCX file
 def extract_text_from_docx(docx_file):
@@ -26,109 +23,115 @@ def extract_text_from_pdf(pdf_file):
         text += page.extract_text()
     return text
 
-# Function to scrape job description from URL
-def scrape_job_description(url):
-    try:
-        response = requests.get(url)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # Attempt to find job description dynamically
-        job_description = ""
-        
-        # Try to find different possible containers for job description
-        description_containers = [
-            'div.job-description',
-            'div.description',
-            'div#job-summary',
-            'section.job-details',
-            'div#job-description',
-            'section.job-summary',
-            'div.job-text',
-            'div.job__description'
-        ]
-        
-        for container in description_containers:
-            job_description = soup.select_one(container)
-            if job_description:
-                return job_description.get_text(strip=True)
-        
-        # If no description found in common containers, fallback to entire page text
-        job_description = soup.get_text(strip=True)
-        
-        if job_description:
-            return job_description
-        else:
-            return "Job description not found"
-    except Exception as e:
-        return f"Error scraping job description: {str(e)}"
+# Function to clean and extract skills from text (simple example, can be expanded)
+def extract_skills(text, skill_list):
+    # Convert text to lowercase and split it into words
+    text = text.lower()
+    words = re.findall(r'\w+', text)
+    # Count how many times each skill appears
+    skill_count = {skill: words.count(skill) for skill in skill_list}
+    return skill_count
 
-# Function to search for job descriptions using Google CSE
-def search_job_description(query):
-    try:
-        service = build("customsearch", "v1", developerKey=google_cse_api_key)
-        res = service.cse().list(q=query, cx=google_cse_engine_id).execute()
+# Function to extract experience in years
+def extract_experience(text):
+    experience = re.findall(r'(\d+)\s?(?:year|yr|yrs)', text, re.IGNORECASE)
+    return sum(int(exp) for exp in experience)
 
-        if "items" in res:
-            # Returning the snippet of the first search result
-            return res["items"][0]["snippet"]
-        else:
-            return "No relevant job descriptions found."
-    except Exception as e:
-        return f"Error searching for job description: {str(e)}"
+# Function to compare job description and resume text for keyword matching
+def compare_keywords(job_description, resume_text):
+    job_keywords = set(re.findall(r'\w+', job_description.lower()))
+    resume_keywords = set(re.findall(r'\w+', resume_text.lower()))
+    common_keywords = job_keywords.intersection(resume_keywords)
+    return len(common_keywords), common_keywords
+
+# Function to provide actionable feedback
+def actionable_feedback(resume_text, job_description, skill_list):
+    feedback = []
+    
+    # Skill extraction
+    resume_skills = extract_skills(resume_text, skill_list)
+    job_skills = extract_skills(job_description, skill_list)
+    
+    missing_skills = [skill for skill, count in job_skills.items() if count > 0 and resume_skills[skill] == 0]
+    
+    if missing_skills:
+        feedback.append(f"Consider adding or emphasizing the following missing skills: {', '.join(missing_skills)}.")
+    else:
+        feedback.append("You have all the key skills listed in the job description.")
+    
+    # Experience check
+    resume_experience = extract_experience(resume_text)
+    job_experience = re.findall(r'(\d+)\s?(?:year|yr|yrs)', job_description, re.IGNORECASE)
+    job_experience_years = sum(int(exp) for exp in job_experience)
+    
+    if resume_experience < job_experience_years:
+        feedback.append(f"You might want to highlight more experience. The job description asks for {job_experience_years} years of experience.")
+    elif resume_experience > job_experience_years:
+        feedback.append(f"Your experience exceeds the job requirement of {job_experience_years} years.")
+    
+    return feedback
 
 # Streamlit App UI
 st.title("Ever AI - Resume & Job Matching")
-st.write("Upload your resume and paste a job link or enter a job title to get AI insights on how well the resume matches the job description.")
+st.write("Upload your resume and provide the job description text to get AI insights on how well the resume matches the job description.")
 
 # File uploader for resume
 resume_file = st.file_uploader("Upload Resume (PDF or DOCX)", type=["pdf", "docx"])
 
-# Input for job post URL or job title
-job_url = st.text_input("Enter Job Posting URL:")
-job_title = st.text_input("Or, Enter Job Title for Google Search:")
+# Input for job description
+job_description = st.text_area("Enter Job Description:")
+
+# Define a list of skills to extract (expand this list as necessary)
+skill_list = ['python', 'java', 'javascript', 'c++', 'html', 'css', 'sql', 'machine learning', 'deep learning', 'data analysis', 'communication', 'teamwork']
 
 # Button to analyze resume and job description
 if st.button("Generate Insights"):
-    if resume_file:
+    if resume_file and job_description:
         try:
             # Extract resume text
             if resume_file.type == "application/pdf":
                 resume_text = extract_text_from_pdf(resume_file)
             elif resume_file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
                 resume_text = extract_text_from_docx(resume_file)
-            
-            # Check if job URL or title is provided
-            if job_url:
-                job_description = scrape_job_description(job_url)
-            elif job_title:
-                job_description = search_job_description(job_title)
-            else:
-                st.warning("Please provide a job URL or job title.")
-                job_description = None  # Explicitly set job_description to None if neither field is filled.
-            
-            if job_description:
-                # Combine resume text and job description for analysis
-                analysis_prompt = f"""
-                Analyze the following resume against the job description. Provide insights into how well the resume matches the job description, highlighting strengths, skills, and any potential gaps.
-                
-                Resume: {resume_text}
-                
-                Job Description: {job_description}
-                
-                Generate insights on the fit and potential improvements.
-                """
 
-                # Generate AI response using the AI model
-                model = genai.GenerativeModel('gemini-1.5-flash')
-                response = model.generate_content(analysis_prompt)
+            # Keyword comparison
+            keyword_match_count, common_keywords = compare_keywords(job_description, resume_text)
 
-                # Display AI-generated insights
-                st.write("Insights and Shortcomings:")
-                st.write(response.text)
-            else:
-                st.warning("No job description found. Please check the URL or job title.")
+            # Actionable feedback based on skills and experience
+            feedback = actionable_feedback(resume_text, job_description, skill_list)
+
+            # Combine resume text and job description for analysis
+            analysis_prompt = f"""
+            Analyze the following resume against the job description. Provide insights into how well the resume matches the job description, highlighting strengths, skills, and any potential gaps.
+
+            Resume: {resume_text}
+
+            Job Description: {job_description}
+
+            Provide insights into skill match, experience relevance, and any notable gaps in the resume.
+            """
+
+            # Generate AI response using the AI model
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            response = model.generate_content(analysis_prompt)
+
+            # Display AI-generated insights
+            st.write("Insights and Shortcomings:")
+            st.write(response.text)
+            
+            # Display additional metrics and feedback
+            st.write(f"\n### Keyword Match Analysis")
+            st.write(f"Keywords matching between the resume and job description: {keyword_match_count} common keywords.")
+            st.write(f"Common keywords: {', '.join(common_keywords)}")
+            
+            st.write(f"\n### Experience Match")
+            st.write(f"Your resume mentions {extract_experience(resume_text)} years of experience.")
+            
+            st.write(f"\n### Actionable Feedback")
+            for item in feedback:
+                st.write(f"- {item}")
         
         except Exception as e:
             st.error(f"Error: {str(e)}")
     else:
-        st.warning("Please upload a resume.")
+        st.warning("Please upload a resume and provide a job description.")
