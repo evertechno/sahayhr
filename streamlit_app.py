@@ -40,7 +40,11 @@ def scrape_job_description(url):
             'div.job-description',
             'div.description',
             'div#job-summary',
-            'section.job-details'
+            'section.job-details',
+            'div#job-description',
+            'section.job-summary',
+            'div.job-text',
+            'div.job__description'
         ]
         
         for container in description_containers:
