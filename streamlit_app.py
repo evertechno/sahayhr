@@ -100,7 +100,7 @@ if st.button("Generate Insights"):
                 job_description = search_job_description(job_title)
             else:
                 st.warning("Please provide a job URL or job title.")
-                job_description = ""
+                job_description = None  # Explicitly set job_description to None if neither field is filled.
             
             if job_description:
                 # Combine resume text and job description for analysis
