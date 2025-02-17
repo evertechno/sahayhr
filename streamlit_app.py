@@ -1,11 +1,11 @@
 import streamlit as st
 import google.generativeai as genai
 import requests
-from bs4 import BeautifulSoup
+from googleapiclient.discovery import build
 from docx import Document
 import PyPDF2
 import io
-from googleapiclient.discovery import build
+from bs4 import BeautifulSoup
 
 # Configure the API key securely from Streamlit's secrets
 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
@@ -55,6 +55,34 @@ def search_job_description(query):
     except Exception as e:
         return f"Error searching for job description: {str(e)}"
 
+# Function to search the web using Google CSE and return results
+def search_web(query):
+    """Searches the web using Google Custom Search API and returns results."""
+    search_url = "https://www.googleapis.com/customsearch/v1"
+    params = {
+        "key": google_cse_api_key,
+        "cx": google_cse_engine_id,
+        "q": query,
+    }
+    response = requests.get(search_url, params=params)
+    if response.status_code == 200:
+        return response.json().get("items", [])
+    else:
+        st.error(f"Search API Error: {response.status_code} - {response.text}")
+        return []
+
+# Function to display search results in a structured format
+def display_search_results(search_results):
+    """Displays search results in a structured format."""
+    if search_results:
+        st.warning("Similar content found on the web:")
+
+        for result in search_results[:5]:  # Show top 5 results
+            with st.expander(result['title']):
+                st.write(f"**Source:** [{result['link']}]({result['link']})")
+                st.write(f"**Snippet:** {result['snippet']}")
+                st.write("---")
+
 # Streamlit App UI
 st.title("Ever AI - Resume & Job Matching")
 st.write("Upload your resume and paste a job link or enter a job title to get AI insights on how well the resume matches the job description.")
@@ -103,4 +131,3 @@ if st.button("Generate Insights"):
             st.error(f"Error: {str(e)}")
     else:
         st.warning("Please upload a resume.")
-
